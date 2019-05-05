@@ -49,7 +49,7 @@ module.exports = function(RED) {
                         node.status({fill:"red", shape:"ring", text:err.message+" "+node.host+":"+node.port});
                     }
                     else {
-                        node.status({fill:"red", shape:"ring", text:"General eror "+node.host+":"+node.port});
+                        node.status({fill:"red", shape:"ring", text:"General error "+node.host+":"+node.port});
                     }
                     
                     if (!inerror) {
