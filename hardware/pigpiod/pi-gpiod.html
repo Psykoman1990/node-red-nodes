@@ -199,7 +199,11 @@
             port: { value:8888 },
             pin: { value:"", required:true, validate:RED.validators.number() },
             intype: { value:"PUD_OFF" },
-            debounce: { value:"25" },
+            debounce: { value:"25", validate:function(v) {
+                if(typeof v !== undefined && v !== null && v !== "") {
+                    if(v < 0 || v > 300000) { return false;}
+                }
+                return true;}},
             read: { value:false }
         },
         inputs:0,
