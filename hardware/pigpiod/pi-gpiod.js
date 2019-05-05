@@ -138,6 +138,9 @@ module.exports = function(RED) {
         this.set = n.set || false;
         this.level = parseInt(n.level || 0);
         this.out = n.out || "out";
+        this.freq = Number(n.freq || 800);
+        if (this.freq < 5) { this.freq = 5; }
+        if (this.freq > 40000) { this.freq = 40000; }
         this.sermin = Number(n.sermin)/100;
         this.sermax = Number(n.sermax)/100;
         if (this.sermin > this.sermax) {
@@ -228,6 +231,7 @@ module.exports = function(RED) {
                     node.gpio = PiGPIO.gpio(Number(node.pin));
 
                     node.gpio.modeSetAsync = util.promisify(node.gpio.modeSet);
+                    node.gpio.setPWMfrequencyAsync = util.promisify(node.gpio.setPWMfrequency);
                     node.gpio.writeAsync = util.promisify(node.gpio.write);
 
                     if(node.set) {
@@ -241,7 +245,16 @@ module.exports = function(RED) {
                     else {
                         node.gpio.modeSetAsync('output')
                         .then(function(result) {
-                            node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
+                            if(node.out === "pwm") {
+                                node.gpio.setPWMfrequencyAsync(node.freq)
+                                .then(function(result) {
+                                    node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
+                                })
+                                .catch(function(e) { errorHandler(error);})
+                            }
+                            else {
+                                node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
+                            }
                         })
                         .catch(function(e) { errorHandler(error);})
                     }
