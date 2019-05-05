@@ -169,7 +169,7 @@ module.exports = function(RED) {
                     }
                     if (node.out === "ser") {
                         var r = (node.sermax - node.sermin) * 100;
-                        //node.gpio.setServoPulsewidth(parseInt(1500 - (r/2) + (msg.payload * r / 100)));
+                        node.gpio.setServoPulsewidth(parseInt(1500 - (r/2) + (msg.payload * r / 100)));
                     }
                     node.status({fill:"green",shape:"dot",text:msg.payload.toString()});
                 }
