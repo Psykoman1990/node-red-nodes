@@ -45,9 +45,9 @@
             "servo": "Servo output"
         },
         "status": {
-            "stopped": "stopped",
             "closed": "closed",
-            "not-running": "not running"
+            "error_check_settings": "Check settings for invalid values",
+            "error_inital_read": "Inital read failed"
         },
         "errors": {
             "invalidpin": "Invalid GPIO pin",

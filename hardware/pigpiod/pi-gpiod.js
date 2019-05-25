@@ -13,14 +13,35 @@ module.exports = function(RED) {
         "23":"16", "24":"18", "10":"19", "9":"21", "25":"22", "11":"23", "8":"24", "7":"26",
         "5":"29", "6":"31", "12":"32", "13":"33", "19":"35", "16":"36", "26":"37", "20":"38", "21":"40"
     };
-    var pinTypes = {
-        "PUD_OFF":RED._("pi-gpiod:types.input"),
-        "PUD_UP":RED._("pi-gpiod:types.pullup"),
-        "PUD_DOWN":RED._("pi-gpiod:types.pulldown"),
-        "out":RED._("pi-gpiod:types.digout"),
-        "pwm":RED._("pi-gpiod:types.pwmout"),
-        "ser":RED._("pi-gpiod:types.servo")
-    };
+
+    function returnErrorHandler(err_node) {
+        var handler = function(err) {
+            if(err_node.closing === false) {
+                if (typeof err === 'string') {
+                    err = new Error(err);
+                }
+                if(err === null || typeof err.message === 'undefined') {
+                    err = new Error(RED._("node-red:common.status.error"))
+                }
+                if(err.message.startsWith("Unhandled socket error")) { // TODO Maybe improve this by leting pigpioclient return the socket error object instead
+                    err_node.status({fill:"red", shape:"ring", text:err.message});
+                }
+                else {
+                    err_node.status({fill:"red", shape:"ring", text:err.message+" "+err_node.host+":"+err_node.port});
+                }
+                if (!err_node.inerror) {
+                    err_node.error(err);
+                    err_node.inerror = true;
+                }
+                if( (typeof err_node.PiGPIO !== 'undefined') && (err_node.PiGPIO !== null) ) {
+                    err_node.PiGPIO.end(); /* Do not use callback as it's only called on disconnected (this is not in all cases) */
+                    err_node.PiGPIO = null;
+                }
+                err_node.retry = setTimeout(function() { err_node.doit(); }, 5000);
+            }
+        }
+        return handler
+    }
 
     function GPioInNode(n) {
         RED.nodes.createNode(this, n);
@@ -31,99 +52,95 @@ module.exports = function(RED) {
         this.intype = n.intype;
         this.read = n.read || false;
         this.debounce = Number(n.debounce || 25);
+        if (this.debounce < 0) { this.debounce = 0; }
+        if (this.debounce > 300000) { this.debounce = 300000; }
         this.closing = false;
         var node = this;
-        var PiGPIO;
 
         if (node.pin !== undefined) {
-            var inerror = false;
+            node.inerror = false;
+            node.reconnectHandler = returnErrorHandler(node);
             node.status({fill:"grey", shape:"dot", text:"node-red:common.status.connecting"});
-
-            var errorHandler = function(err) {
-                if(node.closing === false) {
-                    if (typeof e === 'string') {
-                        e = new Error(e);
-                    }
-                    
-                    if(typeof err.message !== 'undefined') {
-                        node.status({fill:"red", shape:"ring", text:err.message+" "+node.host+":"+node.port});
-                    }
-                    else {
-                        node.status({fill:"red", shape:"ring", text:"General error "+node.host+":"+node.port});
-                    }
-                    
-                    if (!inerror) {
-                        node.error(err);
-                        inerror = true;
-                    }
-
-                    if( (typeof PiGPIO !== 'undefined') && (PiGPIO !== null) ) {
-                        PiGPIO.end(); // Do not use callback as it's only called on disconnected (this is not in all cases)
-                        PiGPIO = null;
-                    }
-
-                    node.retry = setTimeout(function() { doit(); }, 5000);
-                }
-            }
-
-            var doit = function() {
+            node.doit = function() {
                 if (node.retry) {
                     clearTimeout(node.retry);
                     node.retry = null;
+                    if (RED.settings.verbose) { node.log("Retrying to connect"); }
                 }
-
-                PiGPIO = PigpioClient.pigpio({host: node.host, port: node.port});
-
-                PiGPIO.on('error', errorHandler);
-                PiGPIO.on('disconnected', errorHandler);
-
-                PiGPIO.on('connected', (info) => {
-                    inerror = false;
-
-                    node.gpio = PiGPIO.gpio(Number(node.pin));
-
-                    node.gpio.modeSetAsync = util.promisify(node.gpio.modeSet);
-                    node.gpio.pullUpDownAsync = util.promisify(node.gpio.pullUpDown);
-                    node.gpio.glitchSetAsync = util.promisify(node.gpio.glitchSet);
-
-                    node.gpio.modeSetAsync('input')
-                    .then(node.gpio.pullUpDownAsync(PullMap[node.intype]))
-                    .then(node.gpio.glitchSetAsync(node.debounce))
-                    .then(function(result) {
+                node.PiGPIO = PigpioClient.pigpio({host: node.host, port: node.port});
+                node.PiGPIO.addListener('error', node.reconnectHandler)
+                node.PiGPIO.addListener('disconnected', node.reconnectHandler)
+                node.PiGPIO.on('connected', (info) => {
+                    node.inerror = false;
+                    node.gpio = node.PiGPIO.gpio(Number(node.pin));
+                    new Promise((resolve, reject) => {
+                        node.gpio.modeSet('input', (error, response) => {
+                            if (error === null) { resolve(response); }
+                            else { reject(error); }
+                        });
+                    }).then((result) => {
+                        if (RED.settings.verbose) { node.log("modeSet result: "+result); }
+                        return new Promise((resolve, reject) => {
+                            node.gpio.pullUpDown(PullMap[node.intype], (error, response) => {
+                                if (error === null) { resolve(response); }
+                                else { reject(error); }
+                            });
+                        });
+                    }).then((result) => {
+                        if (RED.settings.verbose) { node.log("pullUpDown result: "+result); }
+                        return new Promise((resolve, reject) => {
+                            node.gpio.glitchSet(node.debounce, (error, response) => {
+                                if (error === null) { resolve(response); }
+                                else { reject(error); }
+                            });
+                        });
+                    }).then((result) => {
+                        if (RED.settings.verbose) { node.log("glitchSet result: "+result); }
                         node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
-                        node.gpio.notify(function(level, tick) {
+                        node.gpio.notify((level, tick) => {
                             node.send({topic:"pi/"+node.pio, payload:Number(level)});
                             node.status({fill:"green",shape:"dot",text:level});
                         });
+                        return;
+                    }).then(() => {
                         if (node.read) {
-                            setTimeout(function() {
-                                node.gpio.read(function(err, level) {
-                                    node.send({ topic:"pi/"+node.pio, payload:Number(level) });
-                                    node.status({fill:"green",shape:"dot",text:level});
+                            setTimeout(() => {
+                                node.gpio.read((err, level) => {
+                                    if(err === null) {
+                                        node.send({ topic:"pi/"+node.pio, payload:Number(level) });
+                                        node.status({fill:"green",shape:"dot",text:level});
+                                    }
+                                    else {
+                                        node.status({fill:"red", shape:"ring", text:"pi-gpiod.status.error_inital_read"});
+                                    }
                                 });
                             }, 20);
                         }
-                    })
-                    .catch(function(e) { errorHandler(error);})
+                        return;
+                    }).catch((e) => {
+                        if(e !== null) { node.error(e); } else { node.error("pi-gpiod.status.error_check_settings"); }
+                        node.status({fill:"red", shape:"ring", text:"pi-gpiod.status.error_check_settings"});
+                    });
                 });
             };
-            doit();
+            node.doit();
         }
         else {
             node.warn(RED._("pi-gpiod:errors.invalidpin")+": "+node.pio);
         }
 
-        node.on("close", function(done) {
+        node.on("close", (done) => {
             node.closing = true;
             if (node.retry) {
-                clearTimeout(node.retry);
+                clearTimeout(node.retry); 
                 node.retry = null;
             }
-            node.status({fill:"grey", shape:"ring", text:"pi-gpiod.status.closed"});
-            node.gpio.endNotify(function(error, response) {
-                PiGPIO.end(function() {
-                    done();
-                });
+            // TODO check if node.gpio and node.PiGPIO are valid
+            node.gpio.endNotify((error, response) => { // FIXME doesn't work when we were not connected
+                if (RED.settings.verbose) { node.log("endNotify() finished"); }
+                node.PiGPIO.end();
+                node.status({fill:"grey", shape:"ring", text:"pi-gpiod.status.closed"});
+                done();
             });
         });
     }
@@ -152,129 +169,132 @@ module.exports = function(RED) {
         if (this.sermax > 25) { this.sermax = 25; }
         this.closing = false;
         var node = this;
-        var PiGPIO;
 
         function inputlistener(msg) {
-            node.log("Triggered via input");
-            if (msg.payload === "true") { msg.payload = true; }
-            if (msg.payload === "false") { msg.payload = false; }
-            var out = Number(msg.payload);
+            if (msg.payload === "true") { msg.payload = 1; }
+            if (msg.payload === "false") { msg.payload = 0; }
+            msg.payload = Number(msg.payload);
             var limit = 1;
             if (node.out !== "out") { limit = 100; }
-            if ((out >= 0) && (out <= limit)) {
+            if ((msg.payload >= 0) && (msg.payload <= limit)) {
                 if (RED.settings.verbose) { node.log("out: "+msg.payload); }
-                if (!inerror) {
-                    if (node.out === "out") {
-                        node.gpio.write(msg.payload);
-                    }
-                    if (node.out === "pwm") {
-                        node.gpio.setPWMdutyCycle(parseInt(msg.payload * 2.55));
-                    }
-                    if (node.out === "ser") {
-                        var r = (node.sermax - node.sermin) * 100;
-                        node.gpio.setServoPulsewidth(parseInt(1500 - (r/2) + (msg.payload * r / 100)));
-                    }
-                    node.status({fill:"green",shape:"dot",text:msg.payload.toString()});
+                if (!node.inerror) {
+                    new Promise((resolve, reject) => {
+                        if (node.out === "out") {
+                            node.gpio.write(msg.payload, (error, response) => {
+                                if (error === null) { resolve(response); }
+                                else { reject(error); }
+                            });
+                        }
+                        if (node.out === "pwm") {
+                            node.gpio.setPWMdutyCycle(parseInt(msg.payload * 2.55), (error, response) => {
+                                if (error === null) { resolve(response); }
+                                else { reject(error); }
+                            });
+                        }
+                        if (node.out === "ser") {
+                            var r = (node.sermax - node.sermin) * 100;
+                            node.gpio.setServoPulsewidth(parseInt(1500 - (r/2) + (msg.payload * r / 100)), (error, response) => {
+                                if (error === null) { resolve(response); }
+                                else { reject(error); }
+                            });
+                        }
+                    }).then((result) => {
+                        if (RED.settings.verbose) { node.log("out result: "+result); }
+                        node.status({fill:"green",shape:"dot",text:msg.payload.toString()});
+                        return;
+                    }).catch((e) => {
+                        /* We need etxra error handling here because 'error' callback leads to a reconnect */
+                        if(e !== null) {
+                            node.warn(e);
+                        }
+                        else {
+                            node.warn(RED._("pi-gpiod:errors.invalidinput")+": "+msg.payload);
+                        }
+                    });
                 }
                 else {
                     node.status({fill:"grey",shape:"ring",text:"N/C: " + msg.payload.toString()});
                 }
             }
-            else { node.warn(RED._("pi-gpiod:errors.invalidinput")+": "+out); }
+            else {
+                node.warn(RED._("pi-gpiod:errors.invalidinput")+": "+msg.payload);
+            }
         }
 
         if (node.pin !== undefined) {
-            var inerror = false;
+            node.inerror = false;
+            node.reconnectHandler = returnErrorHandler(node);
             node.status({fill:"grey", shape:"dot", text:"node-red:common.status.connecting"});
-
-            var errorHandler = function(err) {
-                if(node.closing === false) {
-                    if (typeof e === 'string') {
-                        e = new Error(e);
-                    }
-                    
-                    if(typeof err.message !== 'undefined') {
-                        node.status({fill:"red", shape:"ring", text:err.message+" "+node.host+":"+node.port});
-                    }
-                    else {
-                        node.status({fill:"red", shape:"ring", text:"General eror "+node.host+":"+node.port});
-                    }
-                    
-                    if (!inerror) {
-                        node.error(err);
-                        inerror = true;
-                    }
-
-                    if( (typeof PiGPIO !== 'undefined') && (PiGPIO !== null) ) {
-                        PiGPIO.end(); // Do not use callback as it's only called on disconnected (this is not in all cases)
-                        PiGPIO = null;
-                    }
-
-                    node.retry = setTimeout(function() { doit(); }, 5000);
-                }
-            }
-
-            var doit = function() {
+            node.doit = function() {
                 if (node.retry) {
                     clearTimeout(node.retry);
                     node.retry = null;
+                    if (RED.settings.verbose) { node.log("Retrying to connect"); }
                 }
-
-                PiGPIO = PigpioClient.pigpio({host: node.host, port: node.port});
-
-                PiGPIO.on('error', errorHandler);
-                PiGPIO.on('disconnected', errorHandler);
-
-                PiGPIO.on('connected', (info) => {
-                    inerror = false;
-
-                    node.gpio = PiGPIO.gpio(Number(node.pin));
-
-                    node.gpio.modeSetAsync = util.promisify(node.gpio.modeSet);
-                    node.gpio.setPWMfrequencyAsync = util.promisify(node.gpio.setPWMfrequency);
-                    node.gpio.writeAsync = util.promisify(node.gpio.write);
-
-                    if(node.set) {
-                        node.gpio.modeSetAsync('output')
-                        .then(node.gpio.writeAsync(node.level))
-                        .then(function(result) {
+                node.PiGPIO = PigpioClient.pigpio({host: node.host, port: node.port});
+                node.PiGPIO.addListener('error', node.reconnectHandler)
+                node.PiGPIO.addListener('disconnected', node.reconnectHandler)
+                node.PiGPIO.on('connected', (info) => {
+                    node.inerror = false;
+                    node.gpio = node.PiGPIO.gpio(Number(node.pin));
+                    new Promise((resolve, reject) => {
+                        node.gpio.modeSet('output', (error, response) => {
+                            if (error === null) { resolve(response); }
+                            else { reject(error); }
+                        });
+                    }).then((result) => {
+                        if (RED.settings.verbose) { node.log("modeSet result: "+result); }
+                        if(node.out === "pwm") {
+                            return new Promise((resolve, reject) => {
+                                node.gpio.setPWMfrequency(node.freq, (error, response) => {
+                                    if (error === null) { resolve(response); }
+                                    else { reject(error); }
+                                });
+                            });
+                        }
+                        else if (node.set) {
+                            return new Promise((resolve, reject) => {
+                                node.gpio.write(node.level, (error, response) => {
+                                    if (error === null) { resolve(response); }
+                                    else { reject(error); }
+                                });
+                            });
+                        }
+                        else {
+                            return null; /* OK */
+                        }
+                    }).then((result) => {
+                        if(node.set) {
+                            if (RED.settings.verbose) { node.log("write result: "+result); }
                             node.status({fill:"green",shape:"dot",text:node.level});
-                        })
-                        .catch(function(e) { errorHandler(error);})
-                    }
-                    else {
-                        node.gpio.modeSetAsync('output')
-                        .then(function(result) {
-                            if(node.out === "pwm") {
-                                node.gpio.setPWMfrequencyAsync(node.freq)
-                                .then(function(result) {
-                                    node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
-                                })
-                                .catch(function(e) { errorHandler(error);})
-                            }
-                            else {
-                                node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
-                            }
-                        })
-                        .catch(function(e) { errorHandler(error);})
-                    }
+                        }
+                        else {
+                            if (RED.settings.verbose && node.out === "pwm") { node.log("setPWMfrequency result: "+result); }
+                            node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
+                        }
+                        return;
+                    }).catch((e) => {
+                        if(e !== null) { node.error(e); } else { node.error("pi-gpiod.status.error_check_settings"); }
+                        node.status({fill:"red", shape:"ring", text:"pi-gpiod.status.error_check_settings"});
+                    });
                 });
             };
-            doit();
+            node.doit();
             node.on("input", inputlistener);
         }
         else {
             node.warn(RED._("pi-gpiod:errors.invalidpin")+": "+node.pio);
         }
 
-        node.on("close", function(done) {
+        node.on("close", (done) => {
             node.closing = true;
             if (node.retry) {
-                clearTimeout(node.retry);
+                clearTimeout(node.retry); 
                 node.retry = null;
             }
+            node.PiGPIO.end();// TODO check if node.PiGPIO is valid
             node.status({fill:"grey",shape:"ring",text:"pi-gpiod.status.closed"});
-            PiGPIO.close();
             done();
         });
     }
