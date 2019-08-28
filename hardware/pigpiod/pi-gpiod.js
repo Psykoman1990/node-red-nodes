@@ -36,7 +36,7 @@ module.exports = function(RED) {
         var PiGPIO;
 
         if (node.pin !== undefined) {
-            var inerror = false;
+            node.inerror = true;
             node.status({fill:"grey", shape:"dot", text:"node-red:common.status.connecting"});
 
             var errorHandler = function(err) {
@@ -52,9 +52,9 @@ module.exports = function(RED) {
                         node.status({fill:"red", shape:"ring", text:"General error "+node.host+":"+node.port});
                     }
                     
-                    if (!inerror) {
+                    if (!node.inerror) {
                         node.error(err);
-                        inerror = true;
+                        node.inerror = true;
                     }
 
                     if( (typeof PiGPIO !== 'undefined') && (PiGPIO !== null) ) {
@@ -78,7 +78,7 @@ module.exports = function(RED) {
                 PiGPIO.on('disconnected', errorHandler);
 
                 PiGPIO.on('connected', (info) => {
-                    inerror = false;
+                    node.inerror = false;
 
                     node.gpio = PiGPIO.gpio(Number(node.pin));
 
@@ -160,7 +160,7 @@ module.exports = function(RED) {
             if (node.out !== "out") { limit = 100; }
             if ((out >= 0) && (out <= limit)) {
                 if (RED.settings.verbose) { node.log("out: "+msg.payload); }
-                if (!inerror) {
+                if (!node.inerror) {
                     if (node.out === "out") {
                         node.gpio.write(msg.payload);
                     }
@@ -181,7 +181,7 @@ module.exports = function(RED) {
         }
 
         if (node.pin !== undefined) {
-            var inerror = false;
+            node.inerror = true;
             node.status({fill:"grey", shape:"dot", text:"node-red:common.status.connecting"});
 
             var errorHandler = function(err) {
@@ -197,9 +197,9 @@ module.exports = function(RED) {
                         node.status({fill:"red", shape:"ring", text:"General eror "+node.host+":"+node.port});
                     }
                     
-                    if (!inerror) {
+                    if (!node.inerror) {
                         node.error(err);
-                        inerror = true;
+                        node.inerror = true;
                     }
 
                     if( (typeof PiGPIO !== 'undefined') && (PiGPIO !== null) ) {
@@ -223,7 +223,7 @@ module.exports = function(RED) {
                 PiGPIO.on('disconnected', errorHandler);
 
                 PiGPIO.on('connected', (info) => {
-                    inerror = false;
+                    node.inerror = false;
 
                     node.gpio = PiGPIO.gpio(Number(node.pin));
 
