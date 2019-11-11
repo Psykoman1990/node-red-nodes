@@ -1,7 +1,6 @@
 module.exports = function(RED) {
     "use strict";
     var PigpioClient = require('pigpio-client');
-    var util = require('util');
 
     var PullMap = {
         "PUD_OFF":0,
@@ -56,9 +55,9 @@ module.exports = function(RED) {
         if (this.debounce > 300000) { this.debounce = 300000; }
         this.closing = false;
         var node = this;
+        node.inerror = false;
 
         if (node.pin !== undefined) {
-            node.inerror = false;
             node.reconnectHandler = returnErrorHandler(node);
             node.status({fill:"grey", shape:"dot", text:"node-red:common.status.connecting"});
             node.doit = function() {
@@ -169,6 +168,8 @@ module.exports = function(RED) {
         if (this.sermax > 25) { this.sermax = 25; }
         this.closing = false;
         var node = this;
+        node.initFinished = false;
+        node.inerror = false;
 
         function inputlistener(msg) {
             if (msg.payload === "true") { msg.payload = 1; }
@@ -178,7 +179,7 @@ module.exports = function(RED) {
             if (node.out !== "out") { limit = 100; }
             if ((msg.payload >= 0) && (msg.payload <= limit)) {
                 if (RED.settings.verbose) { node.log("out: "+msg.payload); }
-                if (!node.inerror) {
+                if (node.initFinished && !node.inerror) {
                     new Promise((resolve, reject) => {
                         if (node.out === "out") {
                             node.gpio.write(msg.payload, (error, response) => {
@@ -223,7 +224,6 @@ module.exports = function(RED) {
         }
 
         if (node.pin !== undefined) {
-            node.inerror = false;
             node.reconnectHandler = returnErrorHandler(node);
             node.status({fill:"grey", shape:"dot", text:"node-red:common.status.connecting"});
             node.doit = function() {
@@ -273,6 +273,7 @@ module.exports = function(RED) {
                             if (RED.settings.verbose && node.out === "pwm") { node.log("setPWMfrequency result: "+result); }
                             node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
                         }
+                        node.initFinished = true;
                         return;
                     }).catch((e) => {
                         if(e !== null) { node.error(e); } else { node.error("pi-gpiod.status.error_check_settings"); }
