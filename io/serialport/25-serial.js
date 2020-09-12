@@ -18,6 +18,10 @@ module.exports = function(RED) {
         this.databits = parseInt(n.databits) || 8;
         this.parity = n.parity || "none";
         this.stopbits = parseInt(n.stopbits) || 1;
+        this.dtr = n.dtr || "none";
+        this.rts = n.rts || "none";
+        this.cts = n.cts || "none";
+        this.dsr = n.dsr || "none";
         this.bin = n.bin || "false";
         this.out = n.out || "char";
         this.waitfor = n.waitfor || "";
@@ -37,6 +41,19 @@ module.exports = function(RED) {
             node.port = serialPool.get(this.serialConfig);
 
             node.on("input",function(msg) {
+                if (msg.hasOwnProperty("baudrate")) {
+                    var baud = parseInt(msg.baudrate);
+                    if (isNaN(baud)) {
+                        node.error(RED._("serial.errors.badbaudrate"),msg);
+                    } else {
+                        node.port.update({baudRate: baud},function(err,res) {
+                            if (err) {
+                                var errmsg = err.toString().replace("Serialport","Serialport "+node.port.serial.path);
+                                node.error(errmsg,msg);
+                            }
+                        });
+                    }
+                }
                 if (!msg.hasOwnProperty("payload")) { return; } // do nothing unless we have a payload
                 var payload = node.port.encodePayload(msg.payload);
                 node.port.write(payload,function(err,res) {
@@ -117,6 +134,19 @@ module.exports = function(RED) {
             node.port = serialPool.get(this.serialConfig);
             // Serial Out
             node.on("input",function(msg) {
+                if (msg.hasOwnProperty("baudrate")) {
+                    var baud = parseInt(msg.baudrate);
+                    if (isNaN(baud)) {
+                        node.error(RED._("serial.errors.badbaudrate"),msg);
+                    } else {
+                        node.port.update({baudRate: baud},function(err,res) {
+                            if (err) {
+                                var errmsg = err.toString().replace("Serialport","Serialport "+node.port.serial.path);
+                                node.error(errmsg,msg);
+                            }
+                        });
+                    }
+                }
                 if (!msg.hasOwnProperty("payload")) { return; } // do nothing unless we have a payload
                 if (msg.hasOwnProperty("count") && (typeof msg.count === "number") && (node.serialConfig.out === "count")) {
                     node.serialConfig.newline = msg.count;
@@ -174,16 +204,20 @@ module.exports = function(RED) {
         return {
             get:function(serialConfig) {
                 // make local copy of configuration -- perhaps not needed?
-                var port      = serialConfig.serialport,
-                    baud      = serialConfig.serialbaud,
-                    databits  = serialConfig.databits,
-                    parity    = serialConfig.parity,
-                    stopbits  = serialConfig.stopbits,
-                    newline   = serialConfig.newline,
-                    spliton   = serialConfig.out,
-                    waitfor   = serialConfig.waitfor,
+                var port = serialConfig.serialport,
+                    baud = serialConfig.serialbaud,
+                    databits = serialConfig.databits,
+                    parity = serialConfig.parity,
+                    stopbits = serialConfig.stopbits,
+                    dtr = serialConfig.dtr,
+                    rts = serialConfig.rts,
+                    cts = serialConfig.cts,
+                    dsr = serialConfig.dsr,
+                    newline = serialConfig.newline,
+                    spliton = serialConfig.out,
+                    waitfor = serialConfig.waitfor,
                     binoutput = serialConfig.bin,
-                    addchar   = serialConfig.addchar,
+                    addchar = serialConfig.addchar,
                     responsetimeout = serialConfig.responsetimeout;
                 var id = port;
                 // just return the connection object if already have one
@@ -208,13 +242,14 @@ module.exports = function(RED) {
                 var splitc; // split character
                 // Parse the split character onto a 1-char buffer we can immediately compare against
                 if (newline.substr(0,2) == "0x") {
-                    splitc = new Buffer.alloc([parseInt(newline,16)]);
+                    splitc = new Buffer.from([newline]);
                 }
                 else {
                     splitc = new Buffer.from(newline.replace("\\n","\n").replace("\\r","\r").replace("\\t","\t").replace("\\e","\e").replace("\\f","\f").replace("\\0","\0")); // jshint ignore:line
                 }
                 if (addchar === true) { addchar = splitc; }
-                
+                addchar = addchar.replace("\\n","\n").replace("\\r","\r").replace("\\t","\t").replace("\\e","\e").replace("\\f","\f").replace("\\0","\0"); // jshint ignore:line
+                if (addchar.substr(0,2) == "0x") { addchar = new Buffer.from([addchar]); }
                 connections[id] = (function() {
                     var obj = {
                         _emitter: new events.EventEmitter(),
@@ -232,14 +267,15 @@ module.exports = function(RED) {
                                 else {
                                     payload = payload.toString();
                                 }
-                                if ((spliton === "char") && (addchar !== "")) { payload += addchar; }
+                                if (addchar !== "") { payload += addchar; }
                             }
-                            else if ((spliton === "char") && (addchar !== "")) {
+                            else if (addchar !== "") {
                                 payload = Buffer.concat([payload,addchar]);
                             }
                             return payload;
                         },
                         write: function(m,cb) { this.serial.write(m,cb); },
+                        update: function(m,cb) { this.serial.update(m,cb); },
                         enqueue: function(msg,sender,cb) {
                             var payload = this.encodePayload(msg.payload);
                             var qobj = {
@@ -299,7 +335,6 @@ module.exports = function(RED) {
                     //newline = newline.replace("\\n","\n").replace("\\r","\r");
                     var olderr = "";
                     var setupSerial = function() {
-
                         obj.serial = new serialp(port,{
                             baudRate: baud,
                             dataBits: databits,
@@ -321,14 +356,19 @@ module.exports = function(RED) {
                         obj.serial.on('error', function(err) {
                             RED.log.error(RED._("serial.errors.error",{port:port,error:err.toString()}));
                             obj._emitter.emit('closed');
+                            if (obj.tout) { clearTimeout(obj.tout); }
                             obj.tout = setTimeout(function() {
                                 setupSerial();
                             }, settings.serialReconnectTime);
                         });
                         obj.serial.on('close', function() {
                             if (!obj._closing) {
-                                RED.log.error(RED._("serial.errors.unexpected-close",{port:port}));
+                                if (olderr !== "unexpected") {
+                                    olderr = "unexpected";
+                                    RED.log.error(RED._("serial.errors.unexpected-close",{port:port}));
+                                }
                                 obj._emitter.emit('closed');
+                                if (obj.tout) { clearTimeout(obj.tout); }
                                 obj.tout = setTimeout(function() {
                                     setupSerial();
                                 }, settings.serialReconnectTime);
@@ -337,6 +377,13 @@ module.exports = function(RED) {
                         obj.serial.on('open',function() {
                             olderr = "";
                             RED.log.info(RED._("serial.onopen",{port:port,baud:baud,config: databits+""+parity.charAt(0).toUpperCase()+stopbits}));
+                            // Set flow control pins if necessary. Must be set all in same command.
+                            var flags = {};
+                            if (dtr != "none") { flags.dtr = (dtr!="low"); }
+                            if (rts != "none") { flags.rts = (rts!="low"); }
+                            if (cts != "none") { flags.cts = (cts!="low"); }
+                            if (dsr != "none") { flags.dsr = (dsr!="low"); }
+                            if (dtr != "none" || rts != "none" || cts != "none" || dsr != "none") { obj.serial.set(flags); }
                             if (obj.tout) { clearTimeout(obj.tout); obj.tout = null; }
                             //obj.serial.flush();
                             obj._emitter.emit('ready');
@@ -360,8 +407,8 @@ module.exports = function(RED) {
                             for (var z=0; z<d.length; z++) {
                                 var c = d[z];
                                 if (c === waitfor) { active = true; }
+                                if (!active) { continue; }
                                 // handle the trivial case first -- single char buffer
-                                if (!active) { return; }
                                 if ((newline === 0)||(newline === "")) {
                                     emitData(new Buffer.from([c]));
                                     continue;
@@ -439,8 +486,14 @@ module.exports = function(RED) {
     }());
 
     RED.httpAdmin.get("/serialports", RED.auth.needsPermission('serial.read'), function(req,res) {
-        serialp.list(function (err, ports) {
-            res.json(ports);
-        });
+        serialp.list().then(
+            ports => {
+                const a = ports.map(p => p.path);
+                res.json(a);
+            },
+            err => {
+                res.json([RED._("serial.errors.list")]);
+            }
+        )
     });
 }

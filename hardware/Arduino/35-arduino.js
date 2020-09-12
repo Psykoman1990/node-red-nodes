@@ -9,21 +9,21 @@ module.exports = function(RED) {
     function ArduinoNode(n) {
         RED.nodes.createNode(this,n);
         this.device = n.device || null;
+        this.running = false;
+        this.reported = false;
         var node = this;
-        var running = false;
-        var reported = false;
 
         var startup = function() {
             node.board = new Board(node.device, function(e) {
                 if ((e !== undefined) && (e.toString().indexOf("cannot open") !== -1) ) {
-                    if (!reported) {
+                    if (node.reported === false) {
                         node.error(RED._("arduino.errors.portnotfound",{device:node.device}));
-                        reported = true;
+                        node.reported = true;
                     }
                 }
                 else if (e === undefined) {
-                    running = true;
-                    reported = false;
+                    node.running = true;
+                    node.reported = false;
                     node.board.once('ready', function() {
                         node.log(RED._("arduino.status.connected",{device:node.board.sp.path}));
                         if (RED.settings.verbose) {
@@ -34,16 +34,16 @@ module.exports = function(RED) {
                         node.error(RED._("arduino.status.portclosed"));
                     });
                     node.board.once('disconnect', function() {
-                        if (running) { setTimeout(function() { running = false; startup(); }, 5000); }
+                        if (node.running === true) { setTimeout(function() { node.running = false; startup(); }, 5000); }
                     });
                 }
             });
-            setTimeout(function() { if (!running) { startup(); } }, 5000);
+            setTimeout(function() { if (node.running === false) { startup(); } }, 5000);
         };
         startup();
 
         node.on('close', function(done) {
-            running = false;
+            node.running = false;
             if (node.board) {
                 try {
                     node.board.transport.close(function() {
@@ -72,13 +72,16 @@ module.exports = function(RED) {
         if (typeof this.serverConfig === "object") {
             var startup = function() {
                 node.board = node.serverConfig.board;
+                node.board.setMaxListeners(0);
                 node.oldval = "";
                 node.status({fill:"grey",shape:"ring",text:"node-red:common.status.connecting"});
                 var doit = function() {
                     node.running = true;
+                    if (node.state === "ANALOG") { node.board.pinMode(node.pin, 0x02); }
+                    if (node.state === "INPUT") { node.board.pinMode(node.pin, 0x00); }
+                    if (node.state === "PULLUP") { node.board.pinMode(node.pin, 0x0B); }
                     node.status({fill:"green",shape:"dot",text:"node-red:common.status.connected"});
                     if (node.state === "ANALOG") {
-                        node.board.pinMode(node.pin, 0x02);
                         node.board.analogRead(node.pin, function(v) {
                             if (v !== node.oldval) {
                                 node.oldval = v;
@@ -87,7 +90,6 @@ module.exports = function(RED) {
                         });
                     }
                     if (node.state === "INPUT") {
-                        node.board.pinMode(node.pin, 0x00);
                         node.board.digitalRead(node.pin, function(v) {
                             if (v !== node.oldval) {
                                 node.oldval = v;
@@ -96,7 +98,6 @@ module.exports = function(RED) {
                         });
                     }
                     if (node.state === "PULLUP") {
-                        node.board.pinMode(node.pin, 0x0B);
                         node.board.digitalRead(node.pin, function(v) {
                             if (v !== node.oldval) {
                                 node.oldval = v;
@@ -146,14 +147,17 @@ module.exports = function(RED) {
         if (typeof node.serverConfig === "object") {
             var startup = function() {
                 node.board = node.serverConfig.board;
+                node.board.setMaxListeners(0);
                 node.status({fill:"grey",shape:"ring",text:"node-red:common.status.connecting"});
                 var doit = function() {
                     node.running = true;
+                    if (node.state === "OUTPUT") { node.board.pinMode(node.pin, 0x01); }
+                    if (node.state === "PWM") { node.board.pinMode(node.pin, 0x03); }
+                    if (node.state === "SERVO") { node.board.pinMode(node.pin, 0x04); }
                     node.status({fill:"green",shape:"dot",text:"node-red:common.status.connected"});
                     node.on("input", function(msg) {
                         if (node.board.isReady) {
                             if (node.state === "OUTPUT") {
-                                node.board.pinMode(node.pin, 0x01);
                                 if ((msg.payload === true)||(msg.payload.toString() == "1")||(msg.payload.toString().toLowerCase() == "on")) {
                                     node.board.digitalWrite(node.pin, node.board.HIGH);
                                 }
@@ -161,15 +165,13 @@ module.exports = function(RED) {
                                     node.board.digitalWrite(node.pin, node.board.LOW);
                                 }
                             }
-                            if (node.state === "PWM") {
-                                node.board.pinMode(node.pin, 0x03);
+                            if (node.state === "PWM") {  
                                 msg.payload = parseInt((msg.payload * 1) + 0.5);
                                 if ((msg.payload >= 0) && (msg.payload <= 255)) {
                                     node.board.analogWrite(node.pin, msg.payload);
                                 }
                             }
                             if (node.state === "SERVO") {
-                                node.board.pinMode(node.pin, 0x04);
                                 msg.payload = parseInt((msg.payload * 1) + 0.5);
                                 if ((msg.payload >= 0) && (msg.payload <= 180)) {
                                     node.board.servoWrite(node.pin, msg.payload);
@@ -179,18 +181,18 @@ module.exports = function(RED) {
                                 node.board.sysexCommand(msg.payload);
                             }
                             if (node.state === "STRING") {
-                            node.board.sendString(msg.payload.toString());
-                        }
+                                node.board.sendString(msg.payload.toString());
+                            }
                         }
                     });
                     node.board.once('disconnect', function() {
                         node.status({fill:"red",shape:"ring",text:"node-red:common.status.not-connected"});
-                        if (node.running) { setTimeout(function() { node.running = false; startup(); }, 5500); }
+                        if (node.running === true) { setTimeout(function() { node.running = false; startup(); }, 5500); }
                     });
                 }
                 if (node.board.isReady) { doit(); }
                 else { node.board.once("ready", function() { doit(); }); }
-                setTimeout(function() { if (!node.running) { startup(); } }, 4500);
+                setTimeout(function() { if (node.running === false) { startup(); } }, 4500);
             }
             startup();
         }
@@ -204,8 +206,14 @@ module.exports = function(RED) {
     RED.nodes.registerType("arduino out",DuinoNodeOut);
 
     RED.httpAdmin.get("/arduinoports", RED.auth.needsPermission("arduino.read"), function(req,res) {
-        SP.list(function(error, ports) {
-            res.json(ports);
-        });
+        SP.list().then(
+            ports => {
+                const a = ports.map(p => p.comName);
+                res.json(a);
+            },
+            err => {
+                this.log('Error listing serial ports', err)
+            }
+        )
     });
 }

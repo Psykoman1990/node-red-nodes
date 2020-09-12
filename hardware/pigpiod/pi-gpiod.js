@@ -174,6 +174,7 @@ module.exports = function(RED) {
         function inputlistener(msg) {
             if (msg.payload === "true") { msg.payload = 1; }
             if (msg.payload === "false") { msg.payload = 0; }
+            if (node.out === "ser" && (msg.payload === null || msg.payload === "")) { msg.payload = 0; }
             msg.payload = Number(msg.payload);
             var limit = 1;
             if (node.out !== "out") { limit = 100; }
@@ -188,13 +189,16 @@ module.exports = function(RED) {
                             });
                         }
                         if (node.out === "pwm") {
+                            // TODO parseInt seems to be obsolete as we make msg.payload always to Number in 178. Or is this needed to cut off decimal places?
                             node.gpio.setPWMdutyCycle(parseInt(msg.payload * 2.55), (error, response) => {
                                 if (error === null) { resolve(response); }
                                 else { reject(error); }
                             });
                         }
                         if (node.out === "ser") {
+                            // TODO check if ser works with null, "" inputs -> don't think so as first part of calculation should be > 0 -> maybe add extra flag
                             var r = (node.sermax - node.sermin) * 100;
+                            // TODO parseInt seems to be obsolete as we make msg.payload always to Number in 178. Or is this needed to cut off decimal places?
                             node.gpio.setServoPulsewidth(parseInt(1500 - (r/2) + (msg.payload * r / 100)), (error, response) => {
                                 if (error === null) { resolve(response); }
                                 else { reject(error); }
@@ -217,6 +221,7 @@ module.exports = function(RED) {
                 else {
                     node.status({fill:"grey",shape:"ring",text:"N/C: " + msg.payload.toString()});
                 }
+                else { node.warn(RED._("pi-gpiod:errors.invalidinput")+": "+out); }
             }
             else {
                 node.warn(RED._("pi-gpiod:errors.invalidinput")+": "+msg.payload);
