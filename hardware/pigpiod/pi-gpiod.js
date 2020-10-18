@@ -33,7 +33,7 @@ module.exports = function(RED) {
                     err_node.inerror = true;
                 }
                 if( (typeof err_node.PiGPIO !== 'undefined') && (err_node.PiGPIO !== null) ) {
-                    err_node.PiGPIO.end(); /* Do not use callback as it's only called on disconnected (this is not in all cases) */
+                    err_node.PiGPIO.end(); /* Do not use callback as it's only called on disconnected (this will not be done in all cases) */
                     err_node.PiGPIO = null;
                 }
                 err_node.retry = setTimeout(function() { err_node.doit(); }, 5000);
@@ -72,27 +72,13 @@ module.exports = function(RED) {
                 node.PiGPIO.on('connected', (info) => {
                     node.inerror = false;
                     node.gpio = node.PiGPIO.gpio(Number(node.pin));
-                    new Promise((resolve, reject) => {
-                        node.gpio.modeSet('input', (error, response) => {
-                            if (error === null) { resolve(response); }
-                            else { reject(error); }
-                        });
-                    }).then((result) => {
+                    node.gpio.modeSet('input')
+                    .then((result) => {
                         if (RED.settings.verbose) { node.log("modeSet result: "+result); }
-                        return new Promise((resolve, reject) => {
-                            node.gpio.pullUpDown(PullMap[node.intype], (error, response) => {
-                                if (error === null) { resolve(response); }
-                                else { reject(error); }
-                            });
-                        });
+                        return node.gpio.pullUpDown(PullMap[node.intype]);
                     }).then((result) => {
                         if (RED.settings.verbose) { node.log("pullUpDown result: "+result); }
-                        return new Promise((resolve, reject) => {
-                            node.gpio.glitchSet(node.debounce, (error, response) => {
-                                if (error === null) { resolve(response); }
-                                else { reject(error); }
-                            });
-                        });
+                        return node.gpio.glitchSet(node.debounce);
                     }).then((result) => {
                         if (RED.settings.verbose) { node.log("glitchSet result: "+result); }
                         node.status({fill:"green",shape:"dot",text:"node-red:common.status.ok"});
@@ -135,7 +121,7 @@ module.exports = function(RED) {
                 node.retry = null;
             }
             // TODO check if node.gpio and node.PiGPIO are valid
-            node.gpio.endNotify((error, response) => { // FIXME doesn't work when we were not connected
+            node.gpio.endNotify((error, response) => { // FIXME Doesn't work when we were not connected
                 if (RED.settings.verbose) { node.log("endNotify() finished"); }
                 node.PiGPIO.end();
                 node.status({fill:"grey", shape:"ring", text:"pi-gpiod.status.closed"});
@@ -189,8 +175,7 @@ module.exports = function(RED) {
                             });
                         }
                         if (node.out === "pwm") {
-                            // TODO parseInt seems to be obsolete as we make msg.payload always to Number in 178. Or is this needed to cut off decimal places?
-                            node.gpio.setPWMdutyCycle(parseInt(msg.payload * 2.55), (error, response) => {
+                            node.gpio.setPWMdutyCycle(Math.trunc(msg.payload * 2.55), (error, response) => {
                                 if (error === null) { resolve(response); }
                                 else { reject(error); }
                             });
@@ -198,8 +183,7 @@ module.exports = function(RED) {
                         if (node.out === "ser") {
                             // TODO check if ser works with null, "" inputs -> don't think so as first part of calculation should be > 0 -> maybe add extra flag
                             var r = (node.sermax - node.sermin) * 100;
-                            // TODO parseInt seems to be obsolete as we make msg.payload always to Number in 178. Or is this needed to cut off decimal places?
-                            node.gpio.setServoPulsewidth(parseInt(1500 - (r/2) + (msg.payload * r / 100)), (error, response) => {
+                            node.gpio.setServoPulsewidth(Math.trunc(1500 - (r/2) + (msg.payload * r / 100)), (error, response) => {
                                 if (error === null) { resolve(response); }
                                 else { reject(error); }
                             });
@@ -221,7 +205,6 @@ module.exports = function(RED) {
                 else {
                     node.status({fill:"grey",shape:"ring",text:"N/C: " + msg.payload.toString()});
                 }
-                else { node.warn(RED._("pi-gpiod:errors.invalidinput")+": "+out); }
             }
             else {
                 node.warn(RED._("pi-gpiod:errors.invalidinput")+": "+msg.payload);
@@ -243,28 +226,14 @@ module.exports = function(RED) {
                 node.PiGPIO.on('connected', (info) => {
                     node.inerror = false;
                     node.gpio = node.PiGPIO.gpio(Number(node.pin));
-                    new Promise((resolve, reject) => {
-                        node.gpio.modeSet('output', (error, response) => {
-                            if (error === null) { resolve(response); }
-                            else { reject(error); }
-                        });
-                    }).then((result) => {
+                    node.gpio.modeSet('output')
+                    .then((result) => {
                         if (RED.settings.verbose) { node.log("modeSet result: "+result); }
                         if(node.out === "pwm") {
-                            return new Promise((resolve, reject) => {
-                                node.gpio.setPWMfrequency(node.freq, (error, response) => {
-                                    if (error === null) { resolve(response); }
-                                    else { reject(error); }
-                                });
-                            });
+                            return node.gpio.setPWMfrequency(node.freq);
                         }
                         else if (node.set) {
-                            return new Promise((resolve, reject) => {
-                                node.gpio.write(node.level, (error, response) => {
-                                    if (error === null) { resolve(response); }
-                                    else { reject(error); }
-                                });
-                            });
+                            return node.gpio.write(node.level);
                         }
                         else {
                             return null; /* OK */

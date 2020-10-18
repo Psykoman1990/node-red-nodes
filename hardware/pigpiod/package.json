@@ -3,7 +3,7 @@
     "version": "0.0.14",
     "description": "A node-red node for PiGPIOd",
     "dependencies": {
-        "pigpio-client": ">=1.2.0"
+        "pigpio-client": ">=1.5.1"
     },
     "scripts": {
         "test": "echo \"Error: no test specified\" && exit 1"
